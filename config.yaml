@@ -1,0 +1,62 @@
+# Configuration for Roster Geometry Analysis
+# Carnegie Mellon Sports Analytics Conference
+
+# Analysis Settings
+analysis:
+  season: "2023-24"
+  min_shared_minutes: 10.0
+  max_games_per_team: null  # null for all games, integer to limit for testing
+  
+# Data Sources
+data_sources:
+  salary_sources: ["basketball_reference"]  # Options: basketball_reference, spotrac
+  lineup_sources: ["nba_api"]  # Options: nba_api, pbpstats
+  
+# Network Analysis Parameters
+network:
+  layout_algorithm: "spring"  # Options: spring, circular, kamada_kawai
+  node_size_attribute: "salary"
+  node_color_attribute: "bpm"
+  edge_weight_threshold: 10.0
+  
+# Visualization Settings
+visualization:
+  color_schemes:
+    salary: "Viridis"
+    impact: "RdYlBu"
+    communities: "Set3"
+  figure_width: 800
+  figure_height: 600
+  
+# Statistical Analysis
+statistics:
+  significance_level: 0.05
+  cross_validation_folds: 5
+  random_seed: 42
+  
+# Model Parameters
+models:
+  random_forest:
+    n_estimators: 100
+    max_depth: null
+    min_samples_split: 2
+    
+# Output Settings
+output:
+  save_figures: true
+  figure_format: "html"  # Options: html, png, pdf
+  save_data: true
+  data_format: "csv"  # Options: csv, parquet, json
+  
+# Streamlit Dashboard
+dashboard:
+  title: "Roster Geometry Analysis"
+  subtitle: "Carnegie Mellon Sports Analytics Conference"
+  theme: "light"  # Options: light, dark
+  layout: "wide"
+  
+# Reproducibility
+reproducibility:
+  set_random_seeds: true
+  document_versions: true
+  save_environment: true
