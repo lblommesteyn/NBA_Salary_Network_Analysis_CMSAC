@@ -82,9 +82,9 @@ This project follows reproducible research practices:
 If you use this work in your research, please cite:
 
 ```bibtex
-@inproceedings{roster_geometry_2024,
+@inproceedings{roster_geometry_2025,
   title={Roster Geometry: A Network Analysis of NBA Team Construction},
-  author={Your Name},
+  author={Luke Blommesteyn, Lucian Lavric, Yuvraj Sharma},
   booktitle={Carnegie Mellon Sports Analytics Conference},
   year={2024}
 }
