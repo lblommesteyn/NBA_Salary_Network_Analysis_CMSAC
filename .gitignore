@@ -39,7 +39,7 @@ results/*.csv
 results/*.json
 results/*.html
 data/lineup_data_*.csv
-
+src/data_collection/cache_bbr/*.html
 # Logs
 *.log
 
