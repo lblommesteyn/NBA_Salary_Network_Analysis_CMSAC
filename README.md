@@ -86,7 +86,7 @@ If you use this work in your research, please cite:
   title={Roster Geometry: A Network Analysis of NBA Team Construction},
   author={Luke Blommesteyn, Lucian Lavric, Yuvraj Sharma},
   booktitle={Carnegie Mellon Sports Analytics Conference},
-  year={2024}
+  year={2025}
 }
 ```
 
