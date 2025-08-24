@@ -1,53 +1,10 @@
 #!/usr/bin/env python3
 """
-NBA Lineup BPM Pipeline (Unified)
----------------------------------
+Playoff Lineup BPM Pipeline 
 
-This script consolidates the functionality of three separate scripts
-(`lineup_scraper.py`, `combiner.py` and `BPM_Calculator.py`) into a
-single program. It performs the following steps:
+Scrapes NBA lineup statistics for multiple seasons and categories, merges them into a dataset, 
+and trains a regression model to estimate lineup Box Plus-Minus (BPM).
 
-1. **Scrape** lineup statistics from the NBA Stats API for multiple
-   seasons and categories.  The data are requested directly from
-   ``stats.nba.com/stats/leaguedashlineups`` using asynchronous HTTP
-   requests with realistic headers and retry/backoff logic to handle
-   throttling.
-
-2. **Merge and Normalize** the scraped data.  Traditional counting
-   statistics (e.g. points, rebounds, assists) are merged with
-   possession and efficiency metrics from the "Advanced" category.
-   Counting stats are then converted to per‑100 possession rates.  The
-   script also joins additional statistics from the Four Factors,
-   Miscellaneous, Scoring and Opponent categories when available.
-
-3. **Model Training**.  A Ridge, Lasso or ElasticNet regression model
-   (selected via cross‑validated grid search) is trained to predict
-   lineup ``NET_RATING`` using the per‑100 and percentage statistics as
-   features.  Out‑of‑fold predictions and final model predictions are
-   computed for each lineup.  The model coefficients are saved for
-   inspection.
-
-4. **Output** a single CSV file ``lineup_bpm.csv`` containing the
-   merged dataset along with the model's out‑of‑fold and final
-   predicted lineup BPM values.  A separate CSV of model coefficients
-   is also written.
-
-Usage:
-    python lineup_bpm_pipeline.py
-
-The script relies on ``pandas``, ``aiohttp``, ``numpy`` and
-``scikit‑learn``.  If those libraries are not installed you can
-install them with ``pip install pandas aiohttp brotli scikit‑learn``.
-
-Note:
-    The NBA stats API enforces fairly strict rate limits and may
-    sometimes return ``403`` or ``429`` responses.  This program
-    includes user‑agent rotation and exponential backoff to handle
-    temporary errors, but scraping can still take several minutes
-    depending on network conditions.  If you encounter persistent
-    scraping issues, try reducing the ``CONCURRENCY`` value or
-    adjusting the seasons and categories to a smaller subset while
-    developing.
 """
 
 import asyncio
@@ -73,13 +30,11 @@ from sklearn.impute import SimpleImputer
 
 
 
-##############################################################################
-# Configuration
-##############################################################################
 
-# Seasons to scrape (edit as needed).  New seasons can be appended to the
-# list.  Note that stats.nba.com uses strings like "2024-25" to refer to
-# seasons that span two calendar years.
+# Configuration
+
+
+
 SEASONS: List[str] = [
     "2024-25",
     "2023-24",
@@ -88,11 +43,7 @@ SEASONS: List[str] = [
     "2020-21",
 ]
 
-# Categories of lineup statistics to request.  Each category corresponds
-# to a tab on the lineup stats page.  The mapping below converts the
-# human‑friendly names into the API's ``MeasureType`` parameter.  You
-# can remove or add categories here, but the merge logic later in the
-# script expects at least the "Traditional" and "Advanced" categories.
+
 CATEGORIES: List[str] = [
     "Traditional",
     "Advanced",
@@ -102,10 +53,7 @@ CATEGORIES: List[str] = [
     "Opponent",
 ]
 
-# Mapping from UI category names to the measure types required by the API.
-# The key names should match those in CATEGORIES; the values are the
-# strings accepted by the API.  "Opponent" covers the opponent scoring
-# view on the website.
+
 CATEGORY_MAP: Dict[str, str] = {
     "Traditional": "Base",
     "Advanced": "Advanced",
@@ -115,12 +63,10 @@ CATEGORY_MAP: Dict[str, str] = {
     "Opponent": "Opponent",
 }
 
-# Output directory to hold intermediate and final CSVs.  All CSVs
-# written by this program will be placed under this directory.
+
 SAVE_ALL_CSVS = False
 SAVE_PER100_CSV = False
 
-# Save data files to a folder inside the repo (relative path)
 
 
 OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -128,7 +74,6 @@ OUTPUT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 
 
 
-# Endpoint and base query parameters for the NBA lineup stats API.
 BASE_URL = "https://stats.nba.com/stats/leaguedashlineups"
 BASE_PARAMS: Dict[str, Any] = {
     "SeasonType": "Playoffs",
@@ -156,18 +101,14 @@ BASE_PARAMS: Dict[str, Any] = {
     "PORound": 0,
 }
 
-# Concurrency and retry settings for the async scraper.  Adjust
-# ``CONCURRENCY`` down if you see frequent 403/429 errors; increasing it
-# may speed up scraping but could trigger server throttling.
+
 CONCURRENCY = 3
 MAX_RETRIES = 4
 REQUEST_TIMEOUT = 30  # seconds
 DELAY_JITTER_RANGE = (0.05, 0.2)  # small random delay between requests
 
 
-# User‑agent pool used to rotate the ``User-Agent`` header on each
-# request.  Rotating agents helps to avoid some trivial blocking.  Feel
-# free to add more recent UA strings here.
+
 UA_POOL: List[str] = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
@@ -175,9 +116,9 @@ UA_POOL: List[str] = [
 ]
 
 
-##############################################################################
+
 # Helper functions for scraping
-##############################################################################
+
 
 def referer_for_category(category: str) -> str:
     """Return a referer URL appropriate for a category.
@@ -251,7 +192,7 @@ def concat_align(dfs: List[pd.DataFrame]) -> pd.DataFrame:
     if not dfs:
         return pd.DataFrame()
 
-    # ✅ Always force Season column into col_order first
+    # Always force Season column into col_order first
     col_order: List[str] = ["Season"] + [c for c in dfs[0].columns if c != "Season"]
 
     for df in dfs[1:]:
@@ -263,7 +204,7 @@ def concat_align(dfs: List[pd.DataFrame]) -> pd.DataFrame:
 
     combined = pd.concat(aligned, ignore_index=True)
 
-    # ✅ Ensure Season column isn’t all NaN
+    # Ensure Season column isn’t all NaN
     if "Season" in combined.columns:
         combined["Season"] = combined["Season"].fillna("Unknown")
 
@@ -271,9 +212,9 @@ def concat_align(dfs: List[pd.DataFrame]) -> pd.DataFrame:
 
 
 
-##############################################################################
+
 # Asynchronous scraping logic
-##############################################################################
+
 
 async def fetch_one(
     session: aiohttp.ClientSession,
@@ -361,9 +302,8 @@ async def scrape_all() -> Dict[str, pd.DataFrame]:
     return combined
 
 
-##############################################################################
+
 # Data merging and per‑100 possession normalization
-##############################################################################
 
 def merge_trad_and_adv(
     trad: pd.DataFrame,
@@ -414,9 +354,7 @@ def safe_merge(left: pd.DataFrame, right: Optional[pd.DataFrame], keys: List[str
     return pd.merge(left, right_clean, on=keys, how="left")
 
 
-##############################################################################
 # Feature table construction
-##############################################################################
 
 def build_feature_table(
     category_data: Dict[str, pd.DataFrame],
@@ -458,7 +396,7 @@ def build_feature_table(
         if min_poss is not None:
             merged = merged[merged["POSS"] >= min_poss]
 
-    # 🔥 Drop duplicate lineups BEFORE feature construction
+    # Drop duplicate lineups BEFORE feature construction
     merged = merged.drop_duplicates(
         subset=["Season", "TEAM_ABBREVIATION", "GROUP_NAME"]
     ).reset_index(drop=True)
@@ -496,9 +434,8 @@ def build_feature_table(
 
 
 
-##############################################################################
 # Model training and evaluation
-##############################################################################
+
 
 def fit_best_model(
     X: pd.DataFrame,
@@ -566,9 +503,9 @@ def evaluate_oof(
     return oof_pred, r2, mae, rmse
 
 
-##############################################################################
+
 # Main driver
-##############################################################################
+
 
 def main() -> None:
     print("Scraping lineup data from NBA stats API...")
@@ -583,7 +520,7 @@ def main() -> None:
             drop_cols = ["GROUP_SET", "GROUP_ID", "TEAM_ID"]
             df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
 
-            # 🔥 Ensure Season is always present
+            # Ensure Season is always present
             if "Season" not in df.columns:
                 df["Season"] = df.get("Season", pd.Series(["Unknown"] * len(df)))
 
@@ -639,11 +576,11 @@ def main() -> None:
             - out.groupby("Season")["Lineup_BPM_OOF"].transform("mean")
         )
 
-    # 🔥 Clean final BPM file
+    # Clean final BPM file
     drop_cols = ["GROUP_SET", "GROUP_ID", "TEAM_ID"]
     out = out.drop(columns=[c for c in out.columns if c in drop_cols], errors="ignore")
 
-    # 🔥 Ensure Season is always present
+    # Ensure Season is always present
     if "Season" not in out.columns and "Season" in df.columns:
         out["Season"] = df["Season"]
     elif "Season" not in out.columns:
@@ -651,7 +588,7 @@ def main() -> None:
 
     bpm_path = os.path.join(OUTPUT_DIR, "lineup_bpm.csv")
     out.to_csv(bpm_path, index=False)
-    print(f"Pipeline completed successfully. Final BPM saved to {bpm_path}")
+    print(f"Final BPM saved to {bpm_path}")
 
 
 
