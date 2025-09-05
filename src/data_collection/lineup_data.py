@@ -214,10 +214,8 @@ class LineupDataCollector:
         
         all_team_data = []
         
-        # Limit to just a few teams for testing to avoid rate limits
-        test_teams = self.teams_info[:6]  # First 6 teams
-        
-        for team_info in test_teams:
+        # Process all available NBA teams by default
+        for team_info in self.teams_info:
             team_id = team_info['id']
             team_name = team_info['full_name']
             
@@ -226,7 +224,7 @@ class LineupDataCollector:
             team_data = self.collect_team_lineup_data(
                 team_id=team_id,
                 season=season,
-                max_games=max_games_per_team or 5  # Limit games for testing
+                max_games=max_games_per_team  # Respect provided limit; None means all games
             )
             
             if not team_data.empty:
@@ -272,10 +270,8 @@ def collect_lineup_data(season: str, teams_filter: Optional[List[str]] = None,
         collector.teams_info = teams_info
         logger.info(f"Filtered to {len(teams_info)} teams: {[t['abbreviation'] for t in teams_info]}")
     
-    # For testing, limit to max 5 games per team to avoid rate limits
-    test_max_games = min(max_games or 5, 5)
-    
-    return collector.collect_all_teams_lineup_data(season, test_max_games)
+    # Respect provided max_games; None means all games for the season
+    return collector.collect_all_teams_lineup_data(season, max_games)
 
 
 if __name__ == "__main__":
