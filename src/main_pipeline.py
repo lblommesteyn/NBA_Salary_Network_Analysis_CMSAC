@@ -101,6 +101,53 @@ class RosterGeometryPipeline:
         """Run network analysis on collected data."""
         logger.info("Running network analysis...")
         
+        # Ensure player_id present in salary_data by merging from lineup names if missing
+        if 'player_id' not in salary_data.columns or salary_data['player_id'].isna().all():
+            try:
+                logger.info("Enriching salary_data with player_id from lineup_data")
+                # Build name-id mapping from lineup data for this season
+                p1 = lineup_data.loc[lineup_data['season'] == season, ['team_id', 'season', 'player1_id', 'player1_name']]
+                p1 = p1.rename(columns={'player1_id': 'player_id', 'player1_name': 'player_name'})
+                p2 = lineup_data.loc[lineup_data['season'] == season, ['team_id', 'season', 'player2_id', 'player2_name']]
+                p2 = p2.rename(columns={'player2_id': 'player_id', 'player2_name': 'player_name'})
+                name_id_map = pd.concat([p1, p2], ignore_index=True).drop_duplicates(subset=['team_id', 'player_id'])
+
+                # Normalize names for join (case/whitespace)
+                def norm_name(s):
+                    return s.astype(str).str.strip().str.lower()
+                if 'player_name' in salary_data.columns:
+                    salary_data = salary_data.copy()
+                    salary_data['__pnorm'] = norm_name(salary_data['player_name'])
+                    name_id_map = name_id_map.copy()
+                    name_id_map['__pnorm'] = norm_name(name_id_map['player_name'])
+                    # Left join by team_id + normalized name
+                    merged = salary_data.merge(
+                        name_id_map[['team_id', '__pnorm', 'player_id']],
+                        on=['team_id', '__pnorm'], how='left'
+                    )
+                    # Fill player_id
+                    if 'player_id' in merged.columns and ('player_id_x' in merged.columns or 'player_id_y' in merged.columns):
+                        pass  # Just in case of name conflict; handled below
+                    if 'player_id_y' in merged.columns:
+                        merged['player_id'] = merged['player_id_y']
+                        merged = merged.drop(columns=[c for c in ['player_id_y'] if c in merged.columns])
+                    # Drop helper
+                    merged = merged.drop(columns=['__pnorm'])
+                    salary_data = merged
+
+                # Generate temporary IDs for unmatched players to keep nodes in graph
+                if 'player_id' not in salary_data.columns or salary_data['player_id'].isna().any():
+                    missing_mask = salary_data['player_id'].isna() if 'player_id' in salary_data.columns else pd.Series([True]*len(salary_data))
+                    if missing_mask.any():
+                        logger.warning(f"{missing_mask.sum()} salary rows missing player_id; assigning temporary IDs")
+                        # Use negative IDs to avoid collision with real NBA IDs
+                        temp_ids = - (pd.Series(range(1, missing_mask.sum()+1)).values)
+                        if 'player_id' not in salary_data.columns:
+                            salary_data['player_id'] = pd.NA
+                        salary_data.loc[missing_mask, 'player_id'] = temp_ids
+            except Exception as e:
+                logger.warning(f"Failed to enrich salary_data with player_id: {e}")
+        
         network_features = analyze_roster_networks(salary_data, lineup_data, season)
         
         if network_features.empty:
@@ -114,36 +161,25 @@ class RosterGeometryPipeline:
         features_file = self.results_dir / f"network_features_{season}_{timestamp}.csv"
         network_features.to_csv(features_file, index=False)
         logger.info(f"Saved network features to {features_file}")
+        # LaTeX table
+        features_tex = self.results_dir / f"network_features_table_{season}_{timestamp}.tex"
+        try:
+            network_features.to_latex(features_tex, index=False, longtable=True)
+            logger.info(f"Saved network features LaTeX table to {features_tex}")
+        except Exception as e:
+            logger.warning(f"Failed to export network features LaTeX table: {e}")
+        # Stable _latest copies
+        try:
+            import shutil
+            latest_csv = self.results_dir / f"network_features_{season}_latest.csv"
+            latest_tex = self.results_dir / f"network_features_table_{season}_latest.tex"
+            shutil.copyfile(features_file, latest_csv)
+            if features_tex.exists():
+                shutil.copyfile(features_tex, latest_tex)
+        except Exception as e:
+            logger.warning(f"Failed to write latest copies for network features: {e}")
         
         return network_features
-    
-    def _merge_network_playoff_data(self, network_features: pd.DataFrame, playoff_data: pd.DataFrame) -> pd.DataFrame:
-        """Merge network features with playoff outcomes by team."""
-        # Create team mapping from NBA team IDs to abbreviations
-        team_id_mapping = {
-            1610612737: 'ATL',  # Atlanta Hawks
-            1610612738: 'BOS',  # Boston Celtics
-            1610612747: 'LAL',  # Los Angeles Lakers
-            1610612744: 'GSW'   # Golden State Warriors
-        }
-        
-        # If network features has team_id (integer), convert to team abbreviation
-        if 'team_id' in network_features.columns:
-            network_features = network_features.copy()
-            network_features['team'] = network_features['team_id'].map(team_id_mapping)
-            
-            # Fill any unmapped team IDs with the original team_id as string
-            network_features['team'] = network_features['team'].fillna(network_features['team_id'].astype(str))
-        
-        # Merge on team abbreviation
-        if 'team' in network_features.columns and 'team' in playoff_data.columns:
-            merged = network_features.merge(playoff_data, on='team', how='left')
-        else:
-            logger.warning("Could not find matching team columns for merging playoff data")
-            merged = network_features.copy()
-            
-        logger.info(f"Merged {len(merged)} team records with playoff outcomes")
-        return merged
     
     def run_playoff_analysis(self, network_features: pd.DataFrame, season: str) -> Dict:
         """Run playoff correlation analysis."""
@@ -171,12 +207,42 @@ class RosterGeometryPipeline:
             corr_file = self.results_dir / f"correlations_{season}_{timestamp}.csv"
             analysis_results.correlations.to_csv(corr_file, index=False)
             logger.info(f"Saved correlations to {corr_file}")
+            # LaTeX
+            corr_tex = self.results_dir / f"correlations_table_{season}_{timestamp}.tex"
+            try:
+                analysis_results.correlations.to_latex(corr_tex, index=False, longtable=True)
+                logger.info(f"Saved correlations LaTeX table to {corr_tex}")
+            except Exception as e:
+                logger.warning(f"Failed to export correlations LaTeX table: {e}")
+            # Latest copies
+            try:
+                import shutil
+                shutil.copyfile(corr_file, self.results_dir / f"correlations_{season}_latest.csv")
+                if corr_tex.exists():
+                    shutil.copyfile(corr_tex, self.results_dir / f"correlations_table_{season}_latest.tex")
+            except Exception as e:
+                logger.warning(f"Failed to write latest copies for correlations: {e}")
         
         # Save feature importance
         if not analysis_results.feature_importance.empty:
             importance_file = self.results_dir / f"feature_importance_{season}_{timestamp}.csv"
             analysis_results.feature_importance.to_csv(importance_file, index=False)
             logger.info(f"Saved feature importance to {importance_file}")
+            # LaTeX
+            importance_tex = self.results_dir / f"feature_importance_table_{season}_{timestamp}.tex"
+            try:
+                analysis_results.feature_importance.to_latex(importance_tex, index=False, longtable=True)
+                logger.info(f"Saved feature importance LaTeX table to {importance_tex}")
+            except Exception as e:
+                logger.warning(f"Failed to export feature importance LaTeX table: {e}")
+            # Latest copies
+            try:
+                import shutil
+                shutil.copyfile(importance_file, self.results_dir / f"feature_importance_{season}_latest.csv")
+                if importance_tex.exists():
+                    shutil.copyfile(importance_tex, self.results_dir / f"feature_importance_table_{season}_latest.tex")
+            except Exception as e:
+                logger.warning(f"Failed to write latest copies for feature importance: {e}")
         
         return analysis_results
     
@@ -202,41 +268,23 @@ class RosterGeometryPipeline:
         robustness_file = self.results_dir / f"robustness_analysis_{season}_{timestamp}.csv"
         robustness_results.to_csv(robustness_file, index=False)
         logger.info(f"Saved robustness analysis to {robustness_file}")
+        # LaTeX table export
+        robustness_tex = self.results_dir / f"robustness_analysis_table_{season}_{timestamp}.tex"
+        try:
+            robustness_results.to_latex(robustness_tex, index=False, longtable=True)
+            logger.info(f"Saved robustness analysis LaTeX table to {robustness_tex}")
+        except Exception as e:
+            logger.warning(f"Failed to export robustness LaTeX table: {e}")
+        # Latest copies
+        try:
+            import shutil
+            shutil.copyfile(robustness_file, self.results_dir / f"robustness_analysis_{season}_latest.csv")
+            if robustness_tex.exists():
+                shutil.copyfile(robustness_tex, self.results_dir / f"robustness_analysis_table_{season}_latest.tex")
+        except Exception as e:
+            logger.warning(f"Failed to write latest copies for robustness: {e}")
         
         return robustness_results
-    
-    def run_synthetic_benchmarking(self, historical_robustness: pd.DataFrame,
-                                  salary_cap: float = 120_000_000,
-                                  num_synthetic: int = 100) -> Dict:
-        """Run synthetic roster benchmarking analysis."""
-        logger.info("Running synthetic roster benchmarking...")
-        
-        constraints = RosterConstraints(
-            salary_cap=salary_cap,
-            min_players=13,
-            max_players=17,
-            max_salary_share=0.35,
-            min_salary=500_000
-        )
-        
-        benchmark_results = benchmark_against_synthetic(
-            historical_robustness, constraints, num_synthetic
-        )
-        
-        logger.info(f"Synthetic benchmarking complete: "
-                   f"{benchmark_results['synthetic_outperform_pct']:.1%} of synthetic rosters "
-                   f"outperform historical average")
-        
-        # Save benchmark results
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        benchmark_file = self.results_dir / f"synthetic_benchmark_{timestamp}.json"
-        
-        import json
-        with open(benchmark_file, 'w') as f:
-            json.dump(benchmark_results, f, indent=2)
-        logger.info(f"Saved benchmark results to {benchmark_file}")
-        
-        return benchmark_results
     
     def create_visualizations(self, network_features: pd.DataFrame) -> Dict:
         """Create interactive visualizations."""
@@ -246,12 +294,23 @@ class RosterGeometryPipeline:
         
         # Save visualizations
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+        season = network_features['season'].iloc[0] if 'season' in network_features.columns and len(network_features) > 0 else 'season'
         combined_results = {}
         for name, fig in figures.items():
-            viz_file = self.results_dir / f"visualization_{name}_{timestamp}.html"
+            viz_file = self.results_dir / f"visualization_{name}_{season}_{timestamp}.html"
             fig.write_html(str(viz_file))
             logger.info(f"Saved {name} visualization to {viz_file}")
+            # Also export PNG via kaleido
+            try:
+                png_file = self.results_dir / f"visualization_{name}_{season}_{timestamp}.png"
+                fig.write_image(str(png_file), format='png', scale=2)
+                logger.info(f"Saved {name} visualization PNG to {png_file}")
+                # Latest copies
+                import shutil
+                shutil.copyfile(viz_file, self.results_dir / f"visualization_{name}_{season}_latest.html")
+                shutil.copyfile(png_file, self.results_dir / f"visualization_{name}_{season}_latest.png")
+            except Exception as e:
+                logger.warning(f"Failed to export PNG or copy latest for {name}: {e}")
             combined_results[name] = fig
         
         return combined_results
